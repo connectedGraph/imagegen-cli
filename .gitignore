@@ -1,0 +1,19 @@
+# 密钥敏感文件
+configs.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# 本地生图测试输出的图片 (排除 .png 文件，但如果有你想保留的特定资源可以自行加例外)
+*.png
+
+# 系统文件
+.DS_Store
+Thumbs.db

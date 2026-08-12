@@ -1,0 +1,21 @@
+{
+  "default_user": "user1",
+  "users": {
+    "user1": {
+      "id": "user1",
+      "name": "用户 A (OpenAI 协议生图网关)",
+      "endpoint": "https://api.example.com/v1/images/generations",
+      "api_key": "sk-your-key-here",
+      "model": "gpt-image-2",
+      "protocol": "openai_images"
+    },
+    "user2": {
+      "id": "user2",
+      "name": "用户 B (Chat 协议生图网关)",
+      "endpoint": "https://api.example.com/v1/chat/completions",
+      "api_key": "sk-your-key-here",
+      "model": "gemini-3.1-flash-image",
+      "protocol": "chat_images"
+    }
+  }
+}
