@@ -3,7 +3,7 @@
   "users": {
     "user1": {
       "id": "user1",
-      "name": "用户 A (OpenAI 协议生图网关)",
+      "name": "用户 A (OpenAI 协议文生图)",
       "endpoint": "https://api.example.com/v1/images/generations",
       "api_key": "sk-your-key-here",
       "model": "gpt-image-2",
@@ -15,6 +15,14 @@
       "endpoint": "https://api.example.com/v1/chat/completions",
       "api_key": "sk-your-key-here",
       "model": "gemini-3.1-flash-image",
+      "protocol": "chat_images"
+    },
+    "user3": {
+      "id": "user3",
+      "name": "用户 C (lt4net gemini 图生图)",
+      "endpoint": "https://api.lt4net.org/v1/chat/completions",
+      "api_key": "sk-your-key-here",
+      "model": "gemini-3.1-flash-image-preview",
       "protocol": "chat_images"
     }
   }

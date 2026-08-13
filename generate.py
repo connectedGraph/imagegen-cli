@@ -4,6 +4,7 @@ import json
 import time
 import base64
 import argparse
+import re
 import urllib.request
 import urllib.parse
 
@@ -17,22 +18,71 @@ def load_configs():
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
+def flatten_refs(items):
+    """把 --image/--style 的多值 + 逗号分隔展开成路径列表。"""
+    out = []
+    for it in items or []:
+        for p in it.split(","):
+            p = p.strip()
+            if p:
+                out.append(p)
+    return out
+
+def image_mime(path):
+    """按文件头判断 MIME（png/jpeg/webp，其余兜底 png）。"""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(12)
+    except OSError:
+        return "image/png"
+    if head[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if head[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/png"
+
+def extract_image_from_message(msg):
+    """兼容两种返回格式：images 数组（New API 标准）或 content 里的 markdown/base64 图。"""
+    imgs = msg.get("images") or []
+    if imgs:
+        u = imgs[0].get("image_url", {}).get("url", "")
+        if "," in u:
+            return base64.b64decode(u.split("base64,", 1)[1])
+    content = msg.get("content")
+    if isinstance(content, str):
+        m = re.search(r"data:image/(?:png|jpeg);base64,([A-Za-z0-9+/=]+)", content)
+        if m:
+            return base64.b64decode(m.group(1))
+    elif isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "image_url":
+                u = part.get("image_url", {}).get("url", "")
+                if "," in u:
+                    return base64.b64decode(u.split("base64,", 1)[1])
+    return None
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="AI 生图 CLI 工具 (支持图生图)。提示词 100% 原始透传，不修改、不拼接、不加画风后缀。",
         formatter_class=argparse.RawTextHelpFormatter,
         epilog="""使用示例:
   imagegen 1024x1024 ./cartoon_cat.png "卡通风格的可爱红熊猫"
-  imagegen --user user2 16:9 ./wallpaper.png "写实风格的夜景城市"
-  imagegen --image ref.png 1024x1024 ./img2img.png "参考图改画风"
+  imagegen --user user3 --image ref.png 16:9 ./img2img.png "参考图改画风"
+  imagegen --image layout.png --image style.png "多图：主图+参考"
+  imagegen --image layout.png --style a.png b.png "主图+多风格图"
+  imagegen --image a.png,b.png "逗号分隔多图"
   imagegen --config                        # 打印配置文件绝对路径
   imagegen --test                          # 最小请求测试 (无提示词时自带默认提示词)
 """,
     )
-    parser.add_argument("--user", choices=["user1", "user2"], default=None,
-                        help="指定配置用户 (user1 或 user2)；省略时用 configs.json 的 default_user")
-    parser.add_argument("--image", default=None,
-                        help="参考图片路径，启用图生图 (仅 chat_images 协议支持)")
+    parser.add_argument("--user", default=None,
+                        help="指定配置用户 (configs.json 里的 id)；省略时用 default_user")
+    parser.add_argument("--image", action="append", default=None,
+                        help="主参考图路径，可多次传或逗号分隔，启用图生图 (仅 chat_images 协议支持)")
+    parser.add_argument("--style", action="append", default=None,
+                        help="风格参考图路径，可多次传或逗号分隔，追加为风格参考")
     parser.add_argument("--config", action="store_true",
                         help="仅打印配置文件绝对路径后退出")
     parser.add_argument("--test", action="store_true",
@@ -62,11 +112,14 @@ def parse_args():
         output_path = raw_args[1]
         prompt = " ".join(raw_args[2:])
 
-    return parsed.user, parsed.image, parsed.config, parsed.test, size_or_ratio, output_path, prompt
+    image_list = flatten_refs(parsed.image)
+    style_list = flatten_refs(parsed.style)
+
+    return parsed.user, image_list, style_list, parsed.config, parsed.test, size_or_ratio, output_path, prompt
 
 def main():
     config_data = load_configs()
-    user_flag, input_image_path, show_config, test_mode, size_or_ratio, output_path, prompt = parse_args()
+    user_flag, image_list, style_list, show_config, test_mode, size_or_ratio, output_path, prompt = parse_args()
 
     if show_config:
         print(CONFIG_FILE)
@@ -92,17 +145,23 @@ def main():
 
     print(f"[*] 开始生成图片...")
     print(f" |- 当前配置: {user_config['name']} [{user_config['id']}]")
-    if input_image_path:
-        print(f" |- 参考图片: {os.path.abspath(input_image_path)} (图生图)")
+    if image_list or style_list:
+        print(f" |- 主参考图 ({len(image_list)}): {image_list}")
+        print(f" |- 风格参考图 ({len(style_list)}): {style_list}")
     print(f" |- 提示词: {prompt}")
     print(f" |- 尺寸/比例: {size_or_ratio}")
     print(f" |- 保存路径: {os.path.abspath(output_path)}")
 
-    # Encode input image if provided
-    base64_image = None
-    if input_image_path and os.path.exists(input_image_path):
-        with open(input_image_path, "rb") as img_f:
-            base64_image = base64.b64encode(img_f.read()).decode('utf-8')
+    # Encode all reference images (主图在前, 风格图在后)
+    ref_paths = image_list + style_list
+    refs = []  # (mime, base64)
+    for p in ref_paths:
+        if not os.path.exists(p):
+            print(f"[!] 参考图不存在: {p}")
+            sys.exit(1)
+        mime = image_mime(p)
+        with open(p, "rb") as f:
+            refs.append((mime, base64.b64encode(f.read()).decode("utf-8")))
 
     if user_config["protocol"] == "openai_images":
         payload = {
@@ -111,17 +170,17 @@ def main():
             "n": 1,
             "size": size_or_ratio
         }
+        # openai_images 的 image 字段是数组，支持多参考图
+        if refs:
+            payload["image"] = [f"data:{m};base64,{b}" for m, b in refs]
     else:
-        if base64_image:
-            messages_content = [
-                {"type": "text", "text": prompt},
-                {
+        if refs:
+            messages_content = [{"type": "text", "text": prompt}]
+            for m, b in refs:
+                messages_content.append({
                     "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/png;base64,{base64_image}"
-                    }
-                }
-            ]
+                    "image_url": {"url": f"data:{m};base64,{b}"},
+                })
         else:
             messages_content = prompt
 
@@ -163,10 +222,7 @@ def main():
                                 img_bytes = img_resp.read()
                 else:
                     message = res_data['choices'][0]['message']
-                    images = message.get('images', [])
-                    if images:
-                        b64_str = images[0]['image_url']['url'].split('base64,')[-1]
-                        img_bytes = base64.b64decode(b64_str)
+                    img_bytes = extract_image_from_message(message)
 
                 if not img_bytes:
                     print("[!] 错误：未能在 API 响应中找到图片数据。响应文本:", json.dumps(res_data, ensure_ascii=False)[:300])
