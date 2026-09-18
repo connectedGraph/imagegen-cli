@@ -1,113 +1,361 @@
-# AI 生图 CLI 工具 & 多用户配置指南
+# imagegen-cli
 
-这是一个纯净透传的 AI 生图 CLI 工具。用户输入的提示词 **100% 原始透传** 给 API，绝不修改、拼接或改变画风。
+> **A small, configurable image-generation CLI for text-to-image and image-to-image workflows.**<br>
+> **一个轻量、可配置的图片生成 CLI，支持文生图与图生图工作流。**
 
-支持 **多参考图图生图**：`--image` 可传多个主参考图，`--style` 追加风格参考图，参考图按顺序传给模型（主图在前、风格图在后）。
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-%3E%3D3.8-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 
 ---
 
-## 📁 配置文件说明 (`configs.json`)
+## 中文
 
-使用前需在脚本所在目录创建 `configs.json`，可直接复制并修改同目录下的 `configs.example.json`：
+### ✨ 简介
+
+`imagegen-cli` 用一个简洁的命令行界面统一管理多个图片生成 API 配置，并把生成结果直接保存到指定路径。它适合个人使用、脚本调用，以及交给 Agent 或自动化工作流执行。
+
+核心原则是：**提示词原样透传**。CLI 不会偷偷添加 `4k`、`masterpiece` 等修饰词，也不会擅自改变你的画风意图。
+
+### 特性
+
+- **多用户配置**：在一个 `configs.json` 中管理多个模型、端点和 API Key。
+- **两种 API 协议**：支持 `images/generations` 与 `chat/completions` 风格的图片生成接口。
+- **文生图与图生图**：支持单张或多张主参考图，以及额外的风格参考图。
+- **顺序可控**：参考图按照「主图在前、风格图在后」的顺序发送给模型。
+- **尺寸与比例透传**：支持 `1024x1024`、`16:9`、`9:16` 等参数，交由后端处理。
+- **脚本友好**：输出路径自动创建，失败请求自动重试，适合接入 Shell、CI 或 Agent 工作流。
+- **零额外依赖**：运行时仅使用 Python 标准库。
+
+### 安装
+
+需要 Python 3.8 或更高版本：
+
+```bash
+git clone https://github.com/connectedGraph/imagegen-cli.git
+cd imagegen-cli
+python3 -m pip install -e . --no-build-isolation
+```
+
+安装后即可在任意目录使用 `imagegen` 命令。
+
+### 配置
+
+复制公开模板并填写自己的配置：
+
+```bash
+cp configs.example.json configs.json
+```
+
+`configs.json` 示例：
 
 ```json
 {
-  "default_user": "user1",
+  "default_user": "openai-user",
   "users": {
-    "user1": {
-      "id": "user1",
-      "name": "用户 A (OpenAI 协议文生图)",
+    "openai-user": {
+      "id": "openai-user",
+      "name": "OpenAI-style image endpoint",
       "endpoint": "https://api.example.com/v1/images/generations",
       "api_key": "sk-your-key-here",
       "model": "gpt-image-2",
       "protocol": "openai_images"
     },
-    "user2": {
-      "id": "user2",
-      "name": "用户 B (Chat 协议生图网关)",
+    "chat-user": {
+      "id": "chat-user",
+      "name": "Chat-compatible image endpoint",
       "endpoint": "https://api.example.com/v1/chat/completions",
       "api_key": "sk-your-key-here",
       "model": "gemini-3.1-flash-image",
-      "protocol": "chat_images"
-    },
-    "user3": {
-      "id": "user3",
-      "name": "用户 C (lt4net gemini 图生图)",
-      "endpoint": "https://api.lt4net.org/v1/chat/completions",
-      "api_key": "sk-your-key-here",
-      "model": "gemini-3.1-flash-image-preview",
       "protocol": "chat_images"
     }
   }
 }
 ```
 
-> ⚠️ `configs.json` 已加入 `.gitignore`（含 API key），请勿提交。公开模板用 `configs.example.json`。
+> **安全提示 / Security note**<br>
+> `configs.json` 已被 `.gitignore` 忽略。请勿提交包含真实 API Key 的配置文件；公开分享时请使用 `configs.example.json`。
 
-### 协议说明
+#### 协议选择
 
-| protocol | 用途 | 图生图 |
-|---|---|---|
-| `openai_images` | `images/generations` 端点，文生图（如 gpt-image-2） | ❌ `image` 字段被忽略，参考图无效 |
-| `chat_images` | `chat/completions` 端点，多模态生图（如 gemini） | ✅ `messages` 里的 `image_url` 数组，**参考图按布局生效** |
+| `protocol` | 适用接口 | 参考图支持 |
+| --- | --- | --- |
+| `openai_images` | `images/generations` 风格接口 | 取决于后端实现；参考图会以 `image` 数组发送 |
+| `chat_images` | `chat/completions` 风格多模态接口 | 支持通过 `messages` 中的 `image_url` 发送参考图 |
 
-实测：同一张控制图，`openai_images` 生成结果与参考图结构相关性 ≈ 0（参考图被忽略），`chat_images` 相关性 0.23~0.48（按参考图布局生成平台）。**图生图务必用 `chat_images` 用户（如 user3）。**
+如果主要需求是图生图，建议优先选择明确支持多模态输入的 `chat_images` 配置，并以实际服务商文档为准。
 
----
+### 快速开始
 
-## ⚙️ 提示词与参数处理
-
-- **纯净透传 Prompt**：你传入什么 Prompt，脚本就直接把什么 Prompt 发给 API。不添加 `4k`、`masterpiece` 等任何额外后缀修饰，确保画风完全由你自己掌控。
-- **尺寸/比例透传**：直接透传 `size` / `aspect_ratio` 参数给后端。
-- **多参考图**：`--image` 与 `--style` 都支持多次传参或用逗号分隔。参考图按「主图在前、风格图在后」顺序填入 `messages`，你可在提示词里描述每张图的作用（如"第一张是布局蓝图，第二张是风格参考"）。
-
----
-
-## 🚀 命令行使用方法
-
-安装为全局 CLI 后（`python -m pip install -e . --no-build-isolation`），任意目录下直接使用 `imagegen`：
+#### 文生图
 
 ```bash
-# 命令格式：imagegen [--user user1|user2|user3] [--image 参考图...] [--style 风格图...] [尺寸/比例] [保存路径] [提示词]
-
-# 示例 1: 纯净生成卡通图（文生图，不改变画风）
-imagegen 1024x1024 ./cartoon_cat.png "卡通风格的可爱红熊猫"
-
-# 示例 2: 指定用户 B 生成 16:9 画幅
-imagegen --user user2 16:9 ./wallpaper.png "写实风格的夜景城市"
-
-# 示例 3: 图生图（chat_images 协议，user3 = lt4net gemini）
-imagegen --user user3 --image ref.png 1024x1024 ./img2img.png "参考图改画风"
-
-# 示例 4: 多主参考图
-imagegen --user user3 --image a.png --image b.png 9:16 ./out.png "把两张图融合"
-
-# 示例 5: 主图 + 风格图（结构/布局参考 + 画风参考）
-imagegen --user user3 --image layout.png --style style1.png style2.png 9:16 ./out.png \
-  "第一张是布局蓝图，其余是风格参考，按蓝图生成地图"
-
-# 示例 6: 逗号分隔多图
-imagegen --user user3 --image a.png,b.png 9:16 ./out.png "多图参考"
-
-# 示例 7: 打印配置文件绝对路径
-imagegen --config
-
-# 示例 8: 最小请求测试
-imagegen --test
-imagegen --user user3 --test      # 指定用户测试
+imagegen 1024x1024 ./outputs/cat.png "一只坐在窗边的红色小熊猫，温暖自然光"
 ```
 
-### 参数说明
+#### 指定配置与画幅
+
+```bash
+imagegen --user chat-user 16:9 ./outputs/city.png "雨夜中的霓虹城市街道"
+```
+
+#### 图生图
+
+```bash
+imagegen --user chat-user \
+  --image reference.png \
+  1024x1024 ./outputs/restyled.png \
+  "保留构图与主体，将画面改为复古胶片风格"
+```
+
+#### 多张参考图
+
+```bash
+# 多张主参考图
+imagegen --user chat-user \
+  --image layout.png --image subject.png \
+  9:16 ./outputs/combined.png \
+  "第一张参考布局，第二张参考主体，将两者融合"
+
+# 主图 + 风格参考图
+imagegen --user chat-user \
+  --image layout.png \
+  --style style-a.png --style style-b.png \
+  16:9 ./outputs/styled.png \
+  "按第一张图的布局，使用其余图片的视觉风格"
+
+# 也可以使用逗号分隔
+imagegen --user chat-user --image a.png,b.png \
+  ./outputs/multi-ref.png "综合多张参考图生成"
+```
+
+#### 测试配置
+
+```bash
+# 查看配置文件位置
+imagegen --config
+
+# 使用内置提示词发起最小请求
+imagegen --test
+imagegen --user chat-user --test
+```
+
+### 命令格式
+
+```text
+imagegen [OPTIONS] [SIZE_OR_RATIO] [OUTPUT_PATH] [PROMPT...]
+```
 
 | 参数 | 说明 |
 | --- | --- |
-| `--user <id>` | 指定配置用户（`configs.json` 里的 id）；省略时用 `default_user` |
-| `--image <路径>` | **主参考图**，可多次传或逗号分隔多个，启用图生图（仅 `chat_images` 协议生效） |
-| `--style <路径>` | **风格参考图**，可多次传或逗号分隔多个，追加为风格参考 |
-| `--config` | 仅打印配置文件绝对路径后退出 |
-| `--test` | 最小请求测试：未提供提示词时用内置默认提示词发一次请求 |
-| `[尺寸/比例]` | 透传给后端，如 `1024x1024`、`16:9`、`9:16` |
-| `[保存路径]` | 输出文件路径，自动创建缺失目录 |
-| `[提示词]` | 100% 原始透传，不加任何修饰词 |
+| `--user <id>` | 选择 `configs.json` 中的用户；省略时使用 `default_user` |
+| `--image <path>` | 主参考图；可重复传入，也可使用逗号分隔多个路径 |
+| `--style <path>` | 风格参考图；可重复传入，也可使用逗号分隔多个路径 |
+| `--config` | 打印当前配置文件的绝对路径并退出 |
+| `--test` | 使用内置提示词发起一次最小请求，验证 API 配置 |
+| `SIZE_OR_RATIO` | 例如 `1024x1024`、`16:9`、`9:16`；默认 `1024x1024` |
+| `OUTPUT_PATH` | 输出图片路径；默认 `output.png`，缺失目录会自动创建 |
+| `PROMPT` | 原样发送给后端的提示词 |
 
-查看完整帮助：`imagegen --help`
+完整参数说明：
+
+```bash
+imagegen --help
+```
+
+### 处理流程
+
+1. 读取 `configs.json` 并选择用户配置。
+2. 将提示词、尺寸/比例和参考图编码为对应协议的请求。
+3. 向配置的 API 端点发起请求；失败时最多自动重试 3 次。
+4. 从响应中的 Base64 数据或图片 URL 提取结果。
+5. 将图片保存到指定路径，并自动创建父目录。
+
+### 项目结构
+
+```text
+.
+├── generate.py          # CLI 实现
+├── configs.example.json # 配置模板
+├── pyproject.toml       # Python 包与 CLI 入口
+└── LICENSE              # MIT License
+```
+
+### 免责声明
+
+本项目只是一个通用 API 客户端，不提供图片生成模型或第三方 API。请遵守所使用服务的条款、版权规则和内容政策，并妥善保护 API Key。
+
+---
+
+## English
+
+### ✨ Overview
+
+`imagegen-cli` provides a compact command-line interface for managing multiple image-generation API profiles and saving generated images directly to a chosen path. It is designed for personal use, shell scripts, Agents, and automation workflows.
+
+The guiding principle is **prompt transparency**: the CLI forwards your prompt as-is. It does not append hidden modifiers such as `4k` or `masterpiece`, and it does not override your artistic intent.
+
+### Features
+
+- **Multiple profiles** — Keep several models, endpoints, and API keys in one `configs.json`.
+- **Two API protocols** — Supports `images/generations` and `chat/completions`-style image endpoints.
+- **Text-to-image and image-to-image** — Use one or more main references plus optional style references.
+- **Deterministic reference order** — Main images are sent first, followed by style images.
+- **Transparent sizing** — Pass values such as `1024x1024`, `16:9`, or `9:16` to the backend.
+- **Automation-friendly** — Creates missing output directories and retries failed requests automatically.
+- **No runtime dependencies** — Uses only the Python standard library.
+
+### Installation
+
+Python 3.8 or newer is required:
+
+```bash
+git clone https://github.com/connectedGraph/imagegen-cli.git
+cd imagegen-cli
+python3 -m pip install -e . --no-build-isolation
+```
+
+The `imagegen` command will then be available from any directory.
+
+### Configuration
+
+Copy the public template and fill in your own values:
+
+```bash
+cp configs.example.json configs.json
+```
+
+Example profile:
+
+```json
+{
+  "default_user": "chat-user",
+  "users": {
+    "chat-user": {
+      "id": "chat-user",
+      "name": "Chat-compatible image endpoint",
+      "endpoint": "https://api.example.com/v1/chat/completions",
+      "api_key": "sk-your-key-here",
+      "model": "gemini-3.1-flash-image",
+      "protocol": "chat_images"
+    }
+  }
+}
+```
+
+> **Security**<br>
+> `configs.json` is ignored by Git. Never commit a file containing a real API key; use `configs.example.json` when sharing configuration publicly.
+
+#### Choosing a protocol
+
+| `protocol` | Endpoint style | Reference-image support |
+| --- | --- | --- |
+| `openai_images` | `images/generations`-style endpoint | Depends on the provider; references are sent as an `image` array |
+| `chat_images` | Multimodal `chat/completions`-style endpoint | References are sent as `image_url` entries in `messages` |
+
+For image-to-image workflows, prefer a `chat_images` profile backed by a provider that explicitly supports multimodal image input. Always follow the provider's documentation.
+
+### Quick start
+
+#### Text-to-image
+
+```bash
+imagegen 1024x1024 ./outputs/cat.png "A red panda sitting by a window in warm natural light"
+```
+
+#### Select a profile and aspect ratio
+
+```bash
+imagegen --user chat-user 16:9 ./outputs/city.png "A neon-lit city street at night in the rain"
+```
+
+#### Image-to-image
+
+```bash
+imagegen --user chat-user \
+  --image reference.png \
+  1024x1024 ./outputs/restyled.png \
+  "Keep the composition and subject, but restyle the image as vintage film photography"
+```
+
+#### Multiple references
+
+```bash
+# Multiple main references
+imagegen --user chat-user \
+  --image layout.png --image subject.png \
+  9:16 ./outputs/combined.png \
+  "Use the first image for layout and the second for the subject"
+
+# Main image plus style references
+imagegen --user chat-user \
+  --image layout.png \
+  --style style-a.png --style style-b.png \
+  16:9 ./outputs/styled.png \
+  "Follow the layout of the first image and use the remaining images as style references"
+
+# Comma-separated references are also supported
+imagegen --user chat-user --image a.png,b.png \
+  ./outputs/multi-ref.png "Generate from multiple references"
+```
+
+#### Test a configuration
+
+```bash
+# Print the active configuration path
+imagegen --config
+
+# Send a minimal request with the built-in test prompt
+imagegen --test
+imagegen --user chat-user --test
+```
+
+### Command reference
+
+```text
+imagegen [OPTIONS] [SIZE_OR_RATIO] [OUTPUT_PATH] [PROMPT...]
+```
+
+| Option | Description |
+| --- | --- |
+| `--user <id>` | Select a user from `configs.json`; falls back to `default_user` |
+| `--image <path>` | Main reference image; repeat the option or pass comma-separated paths |
+| `--style <path>` | Style reference image; repeat the option or pass comma-separated paths |
+| `--config` | Print the absolute path of the active configuration file and exit |
+| `--test` | Send one minimal request using the built-in test prompt |
+| `SIZE_OR_RATIO` | For example `1024x1024`, `16:9`, or `9:16`; defaults to `1024x1024` |
+| `OUTPUT_PATH` | Output path; defaults to `output.png`, creating missing directories automatically |
+| `PROMPT` | The prompt forwarded to the backend without modification |
+
+For the complete help output:
+
+```bash
+imagegen --help
+```
+
+### How it works
+
+1. Loads `configs.json` and selects a profile.
+2. Encodes the prompt, size/aspect ratio, and references for the selected protocol.
+3. Sends the request to the configured API endpoint, retrying up to three times on failure.
+4. Extracts the generated image from Base64 data or an image URL in the response.
+5. Saves the image to the requested path and creates its parent directory when needed.
+
+### Project structure
+
+```text
+.
+├── generate.py          # CLI implementation
+├── configs.example.json # Configuration template
+├── pyproject.toml       # Package metadata and CLI entry point
+└── LICENSE              # MIT License
+```
+
+### Disclaimer
+
+This project is a general-purpose API client. It does not provide an image-generation model or a third-party API. Follow the terms, copyright rules, and content policies of the services you use, and protect your API keys carefully.
+
+---
+
+## License
+
+[MIT](LICENSE) © 2026 connectedGraph
